@@ -1,5 +1,5 @@
 exports.handler = async (event, context) => {
-  const TARGET = 'https://api.warframestat.us';
+  const TARGET = 'https://content.warframe.com/dynamic/worldState.php';
   
   if (event.httpMethod === 'OPTIONS') {
     return {
@@ -12,11 +12,8 @@ exports.handler = async (event, context) => {
     };
   }
 
-  const path = event.path.replace('/.netlify/functions/proxy', '').replace('/pc', '');
-  const targetUrl = TARGET + '/pc' + path;
-
   try {
-    const response = await fetch(targetUrl, {
+    const response = await fetch(TARGET, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json'
