@@ -63,11 +63,33 @@
             '🌀 复眠螺旋': { moodMs: 2 * 3600 * 1000 }
         };
 
-        function calcCountdownFromExpiry(expiry) {
-            if (!expiry) return null;
-            const now = Date.now();
-            const expiryTime = Date.parse(expiry);
+        // 解析官方 API 的 Expiry 时间
+        function parseExpiry(data) {
+            if (!data) return null;
+            
+            let expiryTime;
+            
+            // 格式1: MongoDB {$date: {$numberLong: "1716201600000"}}
+            if (data.Expiry && data.Expiry.$date && data.Expiry.$date.$numberLong) {
+                expiryTime = parseInt(data.Expiry.$date.$numberLong);
+            }
+            // 格式2: 直接字符串
+            else if (typeof data === 'string') {
+                expiryTime = Date.parse(data);
+            }
+            // 格式3: 直接 expiry 字段
+            else if (data.expiry) {
+                expiryTime = Date.parse(data.expiry);
+            }
+            
             if (isNaN(expiryTime)) return null;
+            return expiryTime;
+        }
+
+        function calcCountdownFromExpiry(data) {
+            const expiryTime = parseExpiry(data);
+            if (!expiryTime) return null;
+            const now = Date.now();
             const diff = expiryTime - now;
             return { diff, expiryTime };
         }
@@ -128,11 +150,12 @@
                     const expiry = el.getAttribute('data-expiry');
                     const name = el.getAttribute('data-name');
                     const state = el.getAttribute('data-state');
-                    const countdown = calcCountdownFromExpiry(expiry);
+                    const expiryTime = parseInt(expiry);
+                    const diff = expiryTime - Date.now();
 
-                    if (countdown && countdown.diff > 0) {
-                        el.textContent = '剩余: ' + formatTime(countdown.diff);
-                        if (countdown.diff < 60000) {
+                    if (diff > 0) {
+                        el.textContent = '剩余: ' + formatTime(diff);
+                        if (diff < 60000) {
                             el.classList.add('expiring');
                         } else {
                             el.classList.remove('expiring');
@@ -144,7 +167,7 @@
                             const nextState = predictNextState(name, cache.state);
                             const remaining = predictRemaining(name, nextState);
                             if (remaining) {
-                                const expiredAt = expiry ? Date.parse(expiry) : Date.now();
+                                const expiredAt = expiryTime || Date.now();
                                 const sinceExpired = Date.now() - expiredAt;
                                 const actualRemaining = remaining - (sinceExpired % remaining);
                                 if (actualRemaining > 0) {
@@ -182,22 +205,18 @@
             if (btn) btn.classList.add('spinning');
 
             try {
-                const [earth, cetus, vallis, cambion, zariman, duviri] = await Promise.all([
-                    fetch(API_BASE + '/earthCycle').then(r => r.ok ? r.json() : null).catch(() => null),
-                    fetch(API_BASE + '/cetusCycle').then(r => r.ok ? r.json() : null).catch(() => null),
-                    fetch(API_BASE + '/vallisCycle').then(r => r.ok ? r.json() : null).catch(() => null),
-                    fetch(API_BASE + '/cambionCycle').then(r => r.ok ? r.json() : null).catch(() => null),
-                    fetch(API_BASE + '/zarimanCycle').then(r => r.ok ? r.json() : null).catch(() => null),
-                    fetch(API_BASE + '/duviriCycle').then(r => r.ok ? r.json() : null).catch(() => null)
-                ]);
+                const worldState = await fetch(API_BASE).then(r => r.ok ? r.json() : null).catch(() => null);
+
+                if (!worldState) {
+                    throw new Error('无法获取数据');
+                }
 
                 const cycles = [
-                    { name: '🌍 地球', data: earth, stateKey: 'isDay', dayText: '白天', nightText: '黑夜' },
-                    { name: '🌙 夜灵平野', data: cetus, stateKey: 'isDay', dayText: '白天', nightText: '黑夜' },
-                    { name: '❄️ 奥布山谷', data: vallis, stateKey: 'isWarm', dayText: '温暖', nightText: '寒冷' },
-                    { name: '🦠 魔胎之境', data: cambion, stateKey: 'active', dayText: 'FASS', nightText: 'VOME' },
-                    { name: '🌌 扎里曼', data: zariman, stateKey: 'isCorpus', dayText: 'CORPUS占领', nightText: 'GRINEER占领' },
-                    { name: '🌀 复眠螺旋', data: duviri, isDuviri: true }
+                    { name: '🌍 地球', data: worldState.EarthCycle, stateKey: 'isDay', dayText: '白天', nightText: '黑夜' },
+                    { name: '🌙 夜灵平野', data: worldState.CetusCycle, stateKey: 'isDay', dayText: '白天', nightText: '黑夜' },
+                    { name: '❄️ 奥布山谷', data: worldState.VallisCycle, stateKey: 'isWarm', dayText: '温暖', nightText: '寒冷' },
+                    { name: '🦠 魔胎之境', data: worldState.CambionCycle, stateKey: 'active', dayText: 'FASS', nightText: 'VOME' },
+                    { name: '🌌 扎里曼', data: worldState.ZarimanCycle, stateKey: 'isCorpus', dayText: 'CORPUS占领', nightText: 'GRINEER占领' }
                 ];
 
                 let html = '';
@@ -206,10 +225,7 @@
                         const cache = cycleCache[c.name];
                         if (cache && cache.state) {
                             let state = cache.state, color;
-                            if (c.name === '🌀 复眠螺旋') {
-                                state = DUVIRI_MOOD_NAMES[cache.state] || cache.state;
-                                color = DUVIRI_MOOD_COLORS[cache.state] || '#ff66cc';
-                            } else if (c.name === '🦠 魔胎之境') {
+                            if (c.name === '🦠 魔胎之境') {
                                 color = cache.state === 'FASS' ? '#ff4444' : '#4488ff';
                             } else if (c.name === '🌌 扎里曼') {
                                 color = cache.state === 'CORPUS占领' ? '#4488ff' : '#ff4444';
@@ -233,13 +249,8 @@
 
                     let state, color, rawState;
 
-                    if (c.isDuviri) {
-                        const mood = (c.data.state || 'ANGER').toUpperCase();
-                        rawState = mood;
-                        state = DUVIRI_MOOD_NAMES[mood] || mood;
-                        color = DUVIRI_MOOD_COLORS[mood] || '#ff66cc';
-                    } else if (c.name === '🦠 魔胎之境') {
-                        rawState = (c.data.state || 'FASS').toUpperCase();
+                    if (c.name === '🦠 魔胎之境') {
+                        rawState = (c.data.active || 'FASS').toUpperCase();
                         state = rawState;
                         color = rawState === 'FASS' ? '#ff4444' : '#4488ff';
                     } else if (c.name === '🌌 扎里曼') {
@@ -253,12 +264,12 @@
                         color = isDay ? '#ffaa00' : '#4488ff';
                     }
 
-                    const countdown = calcCountdownFromExpiry(c.data.expiry);
+                    const countdown = calcCountdownFromExpiry(c.data);
                     const isExpired = !countdown || countdown.diff <= 0;
                     const displayTime = isExpired ? '状态轮换中...' : formatTime(countdown.diff);
-                    const expiry = c.data.expiry || '';
+                    const expiryTime = parseExpiry(c.data) || '';
 
-                    cycleCache[c.name] = { state: rawState, expiry: expiry };
+                    cycleCache[c.name] = { state: rawState, expiry: expiryTime };
 
                     html += `
                         <div class="item" style="border-left-color: ${color};">
@@ -266,7 +277,7 @@
                                 <span class="item-name">${c.name}</span>
                                 <span class="item-time" style="color:${color}; background: ${color}22;">${state}</span>
                             </div>
-                            <div class="item-info ${isExpired ? 'expired' : ''}" data-expiry="${expiry}" data-name="${c.name}" data-state="${rawState}">
+                            <div class="item-info ${isExpired ? 'expired' : ''}" data-expiry="${expiryTime}" data-name="${c.name}" data-state="${rawState}">
                                 剩余: ${displayTime}
                             </div>
                         </div>
@@ -275,7 +286,7 @@
 
                 document.getElementById('app').innerHTML = '<div class="card"><div class="card-title">星球周期</div>' + html + '</div>';
                 document.getElementById('updateTime').textContent = '更新: ' + new Date().toLocaleString('zh-CN');
-                document.getElementById('sourceNote').textContent = '数据源: api.warframestat.us (via ' + window.location.host + ')';
+                document.getElementById('sourceNote').textContent = '数据源: content.warframe.com (via ' + window.location.host + ')';
 
                 startCountdown();
             } catch (err) {
