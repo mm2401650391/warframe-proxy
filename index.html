@@ -35,6 +35,7 @@
     <button class="refresh-btn" id="refreshBtn" onclick="loadData()">🔄</button>
 
     <script>
+        // 直接请求官方 API（通过 CORS 代理或直连）
         const API_BASE = 'https://content.warframe.com/dynamic/worldState.php';
         let countdownInterval = null;
         let cycleCache = {};
@@ -63,34 +64,21 @@
             '🌀 复眠螺旋': { moodMs: 2 * 3600 * 1000 }
         };
 
-        // 解析官方 API 的 Expiry 时间
+        // 解析官方 API 的 Expiry 时间（MongoDB 格式）
         function parseExpiry(data) {
             if (!data) return null;
-            
-            let expiryTime;
-            
-            // 格式1: MongoDB {$date: {$numberLong: "1716201600000"}}
             if (data.Expiry && data.Expiry.$date && data.Expiry.$date.$numberLong) {
-                expiryTime = parseInt(data.Expiry.$date.$numberLong);
+                return parseInt(data.Expiry.$date.$numberLong);
             }
-            // 格式2: 直接字符串
-            else if (typeof data === 'string') {
-                expiryTime = Date.parse(data);
-            }
-            // 格式3: 直接 expiry 字段
-            else if (data.expiry) {
-                expiryTime = Date.parse(data.expiry);
-            }
-            
-            if (isNaN(expiryTime)) return null;
-            return expiryTime;
+            if (typeof data === 'string') return Date.parse(data);
+            if (data.expiry) return Date.parse(data.expiry);
+            return null;
         }
 
         function calcCountdownFromExpiry(data) {
             const expiryTime = parseExpiry(data);
             if (!expiryTime) return null;
-            const now = Date.now();
-            const diff = expiryTime - now;
+            const diff = expiryTime - Date.now();
             return { diff, expiryTime };
         }
 
@@ -205,10 +193,20 @@
             if (btn) btn.classList.add('spinning');
 
             try {
-                const worldState = await fetch(API_BASE).then(r => r.ok ? r.json() : null).catch(() => null);
+                const worldState = await fetch(API_BASE, {
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                }).then(r => {
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                    return r.json();
+                }).catch(err => {
+                    console.error('Fetch error:', err);
+                    return null;
+                });
 
                 if (!worldState) {
-                    throw new Error('无法获取数据');
+                    throw new Error('无法获取数据，请检查网络连接');
                 }
 
                 const cycles = [
@@ -286,7 +284,7 @@
 
                 document.getElementById('app').innerHTML = '<div class="card"><div class="card-title">星球周期</div>' + html + '</div>';
                 document.getElementById('updateTime').textContent = '更新: ' + new Date().toLocaleString('zh-CN');
-                document.getElementById('sourceNote').textContent = '数据源: content.warframe.com (via ' + window.location.host + ')';
+                document.getElementById('sourceNote').textContent = '数据源: content.warframe.com';
 
                 startCountdown();
             } catch (err) {
